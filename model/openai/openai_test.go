@@ -24,10 +24,10 @@ import (
 	"testing"
 	"time"
 
-	openai "github.com/openai/openai-go"
-	openaigo "github.com/openai/openai-go"
-	openaiopt "github.com/openai/openai-go/option"
-	"github.com/openai/openai-go/packages/respjson"
+	openai "github.com/openai/openai-go/v3"
+	openaigo "github.com/openai/openai-go/v3"
+	openaiopt "github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/respjson"
 	agentlog "trpc.group/trpc-go/trpc-agent-go/log"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	imodel "trpc.group/trpc-go/trpc-agent-go/model/internal/model"
@@ -437,7 +437,7 @@ func TestModel_convertTools(t *testing.T) {
 	params := m.convertTools(toolsMap)
 	require.Len(t, params, 1, "convertTools len=%d want=%d", len(params), 1)
 
-	fn := params[0].Function
+	fn := params[0].GetFunction()
 	assert.Equal(t, toolName, fn.Name, "function name=%s want=%s", fn.Name, toolName)
 	require.True(t, fn.Description.Valid() && fn.Description.Value == toolDesc, "function description mismatch")
 
@@ -475,7 +475,7 @@ func TestModel_convertTools_StrictProxyTopLevelProperties(t *testing.T) {
 	require.Len(t, converted, 2)
 
 	payload := struct {
-		Tools []openai.ChatCompletionToolParam `json:"tools"`
+		Tools []openai.ChatCompletionToolUnionParam `json:"tools"`
 	}{
 		Tools: converted,
 	}
@@ -597,9 +597,9 @@ func TestConvertTools_UsesOutputSchemaInDescription(t *testing.T) {
 
 	require.Len(t, params, 1)
 	expectedDesc := buildToolDescription(decl)
-	require.True(t, params[0].Function.Description.Valid(), "function description should be set")
-	assert.Equal(t, expectedDesc, params[0].Function.Description.Value)
-	assert.Contains(t, params[0].Function.Description.Value, `"value"`, "output schema JSON should be embedded")
+	require.True(t, params[0].GetFunction().Description.Valid(), "function description should be set")
+	assert.Equal(t, expectedDesc, params[0].GetFunction().Description.Value)
+	assert.Contains(t, params[0].GetFunction().Description.Value, `"value"`, "output schema JSON should be embedded")
 }
 
 // TestModel_Callbacks tests that callback functions are properly called with
@@ -3679,7 +3679,7 @@ func TestConvertTools_ErrorCases(t *testing.T) {
 
 		params := m.convertTools(tools)
 		assert.Len(t, params, 1, "expected 1 tool")
-		assert.Equal(t, "valid_tool", params[0].Function.Name, "expected tool name to be valid_tool")
+		assert.Equal(t, "valid_tool", params[0].GetFunction().Name, "expected tool name to be valid_tool")
 	})
 
 	t.Run("tool with complex schema", func(t *testing.T) {
@@ -3708,7 +3708,7 @@ func TestConvertTools_ErrorCases(t *testing.T) {
 
 		params := m.convertTools(tools)
 		assert.Len(t, params, 1, "expected 1 tool")
-		assert.Equal(t, "complex_tool", params[0].Function.Name, "expected tool name")
+		assert.Equal(t, "complex_tool", params[0].GetFunction().Name, "expected tool name")
 	})
 }
 
@@ -4296,11 +4296,12 @@ func TestToolCallIndexMapping(t *testing.T) {
 	})
 }
 
-// TestChatCompletionAccumulator_ToolCallsEmpty_Panics verifies that the
-// upstream openai-go accumulator panics when JSON.ToolCalls is marked
-// present but the typed ToolCalls slice is empty. This documents the
-// panic behavior that our framework needs to defensively guard against.
-func TestChatCompletionAccumulator_ToolCallsEmpty_Panics(t *testing.T) {
+// TestChatCompletionAccumulator_ToolCallsEmpty_NotPanics verifies that the
+// upstream openai-go accumulator handles empty tool_calls arrays gracefully
+// without panicking. This test documents the current correct behavior after
+// the upstream library fixed the previous panic issue when JSON.ToolCalls was
+// marked present but the typed ToolCalls slice was empty.
+func TestChatCompletionAccumulator_ToolCallsEmpty_NotPanics(t *testing.T) {
 	// This JSON mimics a streaming chunk where the provider sends an empty
 	// tool_calls array together with a tool_calls finish_reason.
 	raw := []byte(`{
@@ -4322,93 +4323,10 @@ func TestChatCompletionAccumulator_ToolCallsEmpty_Panics(t *testing.T) {
 	var chunk openai.ChatCompletionChunk
 	require.NoError(t, json.Unmarshal(raw, &chunk), "failed to unmarshal test chunk")
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatalf("expected panic when adding chunk with JSON.ToolCalls valid and empty ToolCalls slice, but no panic occurred")
-		}
-	}()
-
-	var acc openai.ChatCompletionAccumulator
-	acc.AddChunk(chunk)
-}
-
-// TestSanitizeChunkForAccumulator_FinishReasonToolCalls verifies that
-// sanitizeChunkForAccumulator clears JSON.ToolCalls metadata for chunks
-// that have a finish_reason and an empty ToolCalls slice, which would
-// otherwise cause the upstream accumulator to panic.
-func TestSanitizeChunkForAccumulator_FinishReasonToolCalls(t *testing.T) {
-	raw := []byte(`{
-		"id": "test",
-		"object": "chat.completion.chunk",
-		"created": 1699200000,
-		"model": "gpt-3.5-turbo",
-		"choices": [
-			{
-				"index": 0,
-				"delta": {
-					"content": "",
-					"tool_calls": []
-				},
-				"finish_reason": "tool_calls"
-			}
-		]
-	}`)
-
-	var chunk openai.ChatCompletionChunk
-	require.NoError(t, json.Unmarshal(raw, &chunk))
-	require.Len(t, chunk.Choices, 1)
-	require.Equal(t, "tool_calls", chunk.Choices[0].FinishReason)
-	require.True(t, chunk.Choices[0].Delta.JSON.ToolCalls.Valid())
-	require.Len(t, chunk.Choices[0].Delta.ToolCalls, 0)
-
-	sanitized := sanitizeChunkForAccumulator(chunk)
-
-	// Original chunk should remain unchanged.
-	require.True(t, chunk.Choices[0].Delta.JSON.ToolCalls.Valid())
-
-	// Sanitized chunk should have ToolCalls metadata cleared but still carry
-	// the same finish_reason and an empty typed ToolCalls slice.
-	require.Len(t, sanitized.Choices, 1)
-	assert.Equal(t, "tool_calls", sanitized.Choices[0].FinishReason)
-	assert.False(t, sanitized.Choices[0].Delta.JSON.ToolCalls.Valid())
-	assert.Len(t, sanitized.Choices[0].Delta.ToolCalls, 0)
-}
-
-// TestSanitizeChunkForAccumulator_NoFinishReason ensures that chunks without
-// a finish_reason are left untouched even if they carry an empty ToolCalls
-// array, since these are safe for the accumulator (it will use the content
-// branch instead of the tool_calls branch).
-func TestSanitizeChunkForAccumulator_NoFinishReason(t *testing.T) {
-	raw := []byte(`{
-		"id": "test",
-		"object": "chat.completion.chunk",
-		"created": 1699200000,
-		"model": "gpt-3.5-turbo",
-		"choices": [
-			{
-				"index": 0,
-				"delta": {
-					"content": "hello",
-					"tool_calls": []
-				},
-				"finish_reason": null
-			}
-		]
-	}`)
-
-	var chunk openai.ChatCompletionChunk
-	require.NoError(t, json.Unmarshal(raw, &chunk))
-	require.Len(t, chunk.Choices, 1)
-	require.Equal(t, "", chunk.Choices[0].FinishReason)
-	require.True(t, chunk.Choices[0].Delta.JSON.ToolCalls.Valid())
-	require.Len(t, chunk.Choices[0].Delta.ToolCalls, 0)
-
-	sanitized := sanitizeChunkForAccumulator(chunk)
-
-	// Chunks without finish_reason should not be modified.
-	assert.Equal(t, chunk, sanitized)
-	assert.True(t, sanitized.Choices[0].Delta.JSON.ToolCalls.Valid())
-	assert.Len(t, sanitized.Choices[0].Delta.ToolCalls, 0)
+	require.NotPanics(t, func() {
+		var acc openai.ChatCompletionAccumulator
+		acc.AddChunk(chunk)
+	})
 }
 
 // TestStreamingCallbackIntegration tests the integration of streaming callbacks.
@@ -5682,10 +5600,10 @@ func TestConvertExtraFields(t *testing.T) {
 // and returns its ExtraFields. This allows testing with properly populated respjson.Field values.
 func parseToolCallExtraFields(t *testing.T, jsonStr string) map[string]respjson.Field {
 	t.Helper()
-	var toolCall openai.ChatCompletionMessageToolCall
+	var toolCall openai.ChatCompletionMessageToolCallUnion
 	err := json.Unmarshal([]byte(jsonStr), &toolCall)
 	require.NoError(t, err)
-	return toolCall.JSON.ExtraFields
+	return toolCall.AsFunction().JSON.ExtraFields
 }
 
 // TestConvertToolCalls_ExtraFields tests that convertToolCalls
@@ -5708,8 +5626,10 @@ func TestConvertToolCalls_ExtraFields(t *testing.T) {
 		result := m.convertToolCalls(toolCalls)
 
 		require.Len(t, result, 1)
-		assert.Equal(t, "call-1", result[0].ID)
-		assert.Equal(t, "test_func", result[0].Function.Name)
+		assertNotNilAndValueEquals(t, "call-1", result[0].GetID())
+		f := result[0].GetFunction()
+		require.NotNil(t, f)
+		assert.Equal(t, "test_func", f.Name)
 	})
 
 	t.Run("with extra_fields passes through", func(t *testing.T) {
@@ -5734,7 +5654,7 @@ func TestConvertToolCalls_ExtraFields(t *testing.T) {
 		result := m.convertToolCalls(toolCalls)
 
 		require.Len(t, result, 1)
-		assert.Equal(t, "call-1", result[0].ID)
+		assertNotNilAndValueEquals(t, "call-1", result[0].GetID())
 	})
 
 	t.Run("multiple tool calls with and without extra_fields", func(t *testing.T) {
@@ -5783,9 +5703,9 @@ func TestConvertToolCalls_ExtraFields(t *testing.T) {
 		result := m.convertToolCalls(toolCalls)
 
 		require.Len(t, result, 3)
-		assert.Equal(t, "call-1", result[0].ID)
-		assert.Equal(t, "call-2", result[1].ID)
-		assert.Equal(t, "call-3", result[2].ID)
+		assertNotNilAndValueEquals(t, "call-1", result[0].GetID())
+		assertNotNilAndValueEquals(t, "call-2", result[1].GetID())
+		assertNotNilAndValueEquals(t, "call-3", result[2].GetID())
 	})
 }
 
@@ -6475,4 +6395,14 @@ func TestGenerateContent_OptimizeForCache_Disabled(t *testing.T) {
 
 	// Verify original order is preserved (user, system, assistant)
 	assert.Equal(t, []string{"user", "system", "assistant"}, capturedRoles)
+}
+
+func assertNotNilAndValueEquals[T any](t *testing.T, expected T, actual *T) bool {
+	t.Helper()
+
+	if !assert.NotNil(t, actual) {
+		return false
+	}
+
+	return assert.Equal(t, expected, *actual)
 }

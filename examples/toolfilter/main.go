@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	openaigo "github.com/openai/openai-go"
+	openaigo "github.com/openai/openai-go/v3"
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 	"trpc.group/trpc-go/trpc-agent-go/event"
@@ -94,7 +94,7 @@ func (c *toolFilterDemo) setup(_ context.Context) error {
 			if len(req.Tools) > 0 {
 				toolNames := make([]string, 0, len(req.Tools))
 				for _, t := range req.Tools {
-					toolNames = append(toolNames, t.Function.Name)
+					toolNames = append(toolNames, t.GetFunction().Name)
 				}
 				fmt.Printf("📋 Tools in OpenAI request: %v\n", toolNames)
 			} else {

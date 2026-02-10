@@ -25,11 +25,11 @@ import (
 	"strconv"
 	"time"
 
-	openai "github.com/openai/openai-go"
-	openaiopt "github.com/openai/openai-go/option"
-	"github.com/openai/openai-go/packages/respjson"
-	"github.com/openai/openai-go/packages/ssestream"
-	"github.com/openai/openai-go/shared"
+	openai "github.com/openai/openai-go/v3"
+	openaiopt "github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/respjson"
+	"github.com/openai/openai-go/v3/packages/ssestream"
+	"github.com/openai/openai-go/v3/shared"
 	"trpc.group/trpc-go/trpc-agent-go/log"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	imodel "trpc.group/trpc-go/trpc-agent-go/model/internal/model"
@@ -809,14 +809,16 @@ func audioToBase64(audio *model.Audio) string {
 	return "data:" + audio.Format + ";base64," + base64.StdEncoding.EncodeToString(audio.Data)
 }
 
-func (m *Model) convertToolCalls(toolCalls []model.ToolCall) []openai.ChatCompletionMessageToolCallParam {
-	var result []openai.ChatCompletionMessageToolCallParam
+func (m *Model) convertToolCalls(toolCalls []model.ToolCall) []openai.ChatCompletionMessageToolCallUnionParam {
+	var result []openai.ChatCompletionMessageToolCallUnionParam
 	for _, toolCall := range toolCalls {
-		param := openai.ChatCompletionMessageToolCallParam{
-			ID: toolCall.ID,
-			Function: openai.ChatCompletionMessageToolCallFunctionParam{
-				Name:      toolCall.Function.Name,
-				Arguments: string(toolCall.Function.Arguments),
+		param := openai.ChatCompletionMessageToolCallUnionParam{
+			OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+				ID: toolCall.ID,
+				Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+					Name:      toolCall.Function.Name,
+					Arguments: string(toolCall.Function.Arguments),
+				},
 			},
 		}
 		// Pass through ExtraFields transparently (e.g., Gemini 3's thought_signature).
@@ -828,7 +830,7 @@ func (m *Model) convertToolCalls(toolCalls []model.ToolCall) []openai.ChatComple
 	return result
 }
 
-func (m *Model) convertTools(tools map[string]tool.Tool) []openai.ChatCompletionToolParam {
+func (m *Model) convertTools(tools map[string]tool.Tool) []openai.ChatCompletionToolUnionParam {
 	// Extract and sort tool names for stable ordering to improve cache hit rate
 	toolNames := make([]string, 0, len(tools))
 	for name := range tools {
@@ -837,7 +839,7 @@ func (m *Model) convertTools(tools map[string]tool.Tool) []openai.ChatCompletion
 	sort.Strings(toolNames)
 
 	// Build tools in sorted order
-	var result []openai.ChatCompletionToolParam
+	var result []openai.ChatCompletionToolUnionParam
 	for _, name := range toolNames {
 		tool := tools[name]
 		declaration := tool.Declaration()
@@ -859,11 +861,13 @@ func (m *Model) convertTools(tools map[string]tool.Tool) []openai.ChatCompletion
 				parameters["properties"] = map[string]any{}
 			}
 		}
-		result = append(result, openai.ChatCompletionToolParam{
-			Function: openai.FunctionDefinitionParam{
-				Name:        declaration.Name,
-				Description: openai.String(buildToolDescription(declaration)),
-				Parameters:  parameters,
+		result = append(result, openai.ChatCompletionToolUnionParam{
+			OfFunction: &openai.ChatCompletionFunctionToolParam{
+				Function: openai.FunctionDefinitionParam{
+					Name:        declaration.Name,
+					Description: openai.String(buildToolDescription(declaration)),
+					Parameters:  parameters,
+				},
 			},
 		})
 	}
@@ -952,44 +956,6 @@ func (m *Model) handleStreamingResponse(
 
 	// Call the stream complete callback after final response is sent.
 	m.handleStreamCompleteCallback(ctx, chatRequest, acc, stream.Err())
-}
-
-// sanitizeChunkForAccumulator returns a defensive copy of the given chunk that
-// avoids structures known to cause panics in the upstream OpenAI SDK
-// accumulator. In particular, it clears JSON.ToolCalls metadata when it is
-// marked present but the typed ToolCalls slice is empty on a finish_reason
-// chunk, which would otherwise lead to an out-of-range access in
-// chatCompletionResponseState.update.
-func sanitizeChunkForAccumulator(chunk openai.ChatCompletionChunk) openai.ChatCompletionChunk {
-	if len(chunk.Choices) == 0 {
-		return chunk
-	}
-
-	choice := chunk.Choices[0]
-	delta := choice.Delta
-
-	// Only sanitize the specific pattern that is known to be unsafe for the
-	// accumulator:
-	//   - finish_reason is set (e.g. "tool_calls" or "stop")
-	//   - JSON.ToolCalls is marked present
-	//   - but the typed ToolCalls slice is empty
-	if choice.FinishReason == "" ||
-		!delta.JSON.ToolCalls.Valid() ||
-		len(delta.ToolCalls) != 0 {
-		return chunk
-	}
-
-	sanitized := chunk
-	sanitized.Choices = make([]openai.ChatCompletionChunkChoice, len(chunk.Choices))
-	copy(sanitized.Choices, chunk.Choices)
-
-	// Clear the JSON metadata for ToolCalls on the first choice only. This
-	// preserves finish_reason and usage semantics while preventing the
-	// accumulator from treating this as a tool-call delta that must have at
-	// least one element.
-	sanitized.Choices[0].Delta.JSON.ToolCalls = respjson.Field{}
-
-	return sanitized
 }
 
 type toolCallIndexState struct {
@@ -1193,11 +1159,7 @@ func (m *Model) accumulateChunk(
 	// Always accumulate for correctness (tool call deltas are assembled later),
 	// but skip chunks with reasoning content that would cause the SDK accumulator to panic.
 	if !m.hasReasoningContent(chunk.Choices) {
-		// Sanitize chunks before feeding them into the upstream accumulator to
-		// avoid known panics when JSON.ToolCalls is marked present but the
-		// typed ToolCalls slice is empty, especially on finish_reason chunks.
-		sanitizedChunk := sanitizeChunkForAccumulator(chunk)
-		acc.AddChunk(sanitizedChunk)
+		acc.AddChunk(chunk)
 		if m.accumulateChunkUsage != nil {
 			accUsage, chunkUsage := completionUsageToModelUsage(acc.Usage), completionUsageToModelUsage(chunk.Usage)
 			usage := inverseOpenAISDKAddChunkUsage(accUsage, chunkUsage)
@@ -1691,7 +1653,7 @@ func (m *Model) handleNonStreamingResponse(
 				response.Choices[i].Message.ToolCalls[j] = model.ToolCall{
 					ID:          synthesizedID,
 					Type:        string(toolCall.Type),
-					ExtraFields: convertExtraFields(toolCall.JSON.ExtraFields),
+					ExtraFields: convertExtraFields(toolCall.AsFunction().JSON.ExtraFields),
 					Function: model.FunctionDefinitionParam{
 						Name:      toolCall.Function.Name,
 						Arguments: []byte(toolCall.Function.Arguments),

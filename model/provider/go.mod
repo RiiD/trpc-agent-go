@@ -13,7 +13,7 @@ replace (
 require (
 	github.com/anthropics/anthropic-sdk-go v1.19.0
 	github.com/ollama/ollama v0.13.1
-	github.com/openai/openai-go v1.12.0
+	github.com/openai/openai-go/v3 v3.19.0
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/genai v1.36.0
 	trpc.group/trpc-go/trpc-agent-go v0.6.0
