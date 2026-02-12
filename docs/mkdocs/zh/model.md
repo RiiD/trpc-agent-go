@@ -733,8 +733,9 @@ Batch API 是一种异步批量处理技术，用于高效处理大量请求。�
 **创建批处理任务**：
 
 ```go
+
 import (
-    openaisdk "github.com/openai/openai-go"
+    openaisdk "github.com/openai/openai-go/v3"
     "trpc.group/trpc-go/trpc-agent-go/model"
     "trpc.group/trpc-go/trpc-agent-go/model/openai"
 )
@@ -749,9 +750,11 @@ requests := []*openai.BatchRequestInput{
         Method:   "POST",
         URL:      string(openaisdk.BatchNewParamsEndpointV1ChatCompletions),
         Body: openai.BatchRequest{
-            Messages: []model.Message{
-                model.NewSystemMessage("你是一个有用的助手。"),
-                model.NewUserMessage("你好"),
+            Request: model.Request{
+                Messages: []model.Message{
+                    model.NewSystemMessage("你是一个有用的助手。"),
+                    model.NewUserMessage("你好"),
+                },
             },
         },
     },
@@ -760,9 +763,11 @@ requests := []*openai.BatchRequestInput{
         Method:   "POST",
         URL:      string(openaisdk.BatchNewParamsEndpointV1ChatCompletions),
         Body: openai.BatchRequest{
-            Messages: []model.Message{
-                model.NewSystemMessage("你是一个有用的助手。"),
-                model.NewUserMessage("介绍一下 Go 语言"),
+            Request: model.Request{
+                Messages: []model.Message{
+                    model.NewSystemMessage("你是一个有用的助手。"),
+                    model.NewUserMessage("介绍一下 Go 语言"),
+                },
             },
         },
     },
@@ -947,7 +952,7 @@ Batch API 的执行流程：
 import (
     "time"
 
-    openaiopt "github.com/openai/openai-go/option"
+    openaiopt "github.com/openai/openai-go/v3/option"
     "trpc.group/trpc-go/trpc-agent-go/model/openai"
 )
 
@@ -1084,7 +1089,7 @@ llm := openai.New("deepseek-chat",
 
 ```go
 import (
-    openaiopt "github.com/openai/openai-go/option"
+    openaiopt "github.com/openai/openai-go/v3/option"
     "trpc.group/trpc-go/trpc-agent-go/model/openai"
 )
 
@@ -1149,7 +1154,7 @@ import (
     "net/http"
     "strings"
 
-    openaiopt "github.com/openai/openai-go/option"
+    openaiopt "github.com/openai/openai-go/v3/option"
     "trpc.group/trpc-go/trpc-agent-go/log"
     "trpc.group/trpc-go/trpc-agent-go/model/openai"
 )
@@ -1206,7 +1211,6 @@ llm := openai.New("deepseek-chat",
     ),
 )
 ```
-
 
 ##### 3. 使用自定义 http.RoundTripper（进阶）
 

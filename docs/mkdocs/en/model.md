@@ -737,7 +737,7 @@ Batch API is an asynchronous batch processing technique for efficiently handling
 
 ```go
 import (
-    openaisdk "github.com/openai/openai-go"
+    openaisdk "github.com/openai/openai-go/v3"
     "trpc.group/trpc-go/trpc-agent-go/model"
     "trpc.group/trpc-go/trpc-agent-go/model/openai"
 )
@@ -752,9 +752,11 @@ requests := []*openai.BatchRequestInput{
         Method:   "POST",
         URL:      string(openaisdk.BatchNewParamsEndpointV1ChatCompletions),
         Body: openai.BatchRequest{
-            Messages: []model.Message{
-                model.NewSystemMessage("You are a helpful assistant."),
-                model.NewUserMessage("Hello"),
+            Request: model.Request{
+                Messages: []model.Message{
+                    model.NewSystemMessage("You are a helpful assistant."),
+                    model.NewUserMessage("Hello"),
+                },
             },
         },
     },
@@ -763,9 +765,11 @@ requests := []*openai.BatchRequestInput{
         Method:   "POST",
         URL:      string(openaisdk.BatchNewParamsEndpointV1ChatCompletions),
         Body: openai.BatchRequest{
-            Messages: []model.Message{
-                model.NewSystemMessage("You are a helpful assistant."),
-                model.NewUserMessage("Introduce Go language"),
+            Request: model.Request{
+                Messages: []model.Message{
+                    model.NewSystemMessage("You are a helpful assistant."),
+                    model.NewUserMessage("Introduce Go language"),
+                },
             },
         },
     },
@@ -949,7 +953,7 @@ Important notes:
 ```go
 import (
     "time"
-    openaiopt "github.com/openai/openai-go/option"
+    openaiopt "github.com/openai/openai-go/v3/option"
     "trpc.group/trpc-go/trpc-agent-go/model/openai"
 )
 
@@ -1088,7 +1092,7 @@ by the underlying OpenAI client.
 
 ```go
 import (
-    openaiopt "github.com/openai/openai-go/option"
+    openaiopt "github.com/openai/openai-go/v3/option"
     "trpc.group/trpc-go/trpc-agent-go/model/openai"
 )
 
@@ -1155,7 +1159,7 @@ import (
     "net/http"
     "strings"
 
-    openaiopt "github.com/openai/openai-go/option"
+    openaiopt "github.com/openai/openai-go/v3/option"
     "trpc.group/trpc-go/trpc-agent-go/log"
     "trpc.group/trpc-go/trpc-agent-go/model/openai"
 )
